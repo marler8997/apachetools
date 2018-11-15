@@ -12,8 +12,10 @@ import std.stdio;
 
 import apache.util;
 
-enum apacheSitesAvailableDir = "/etc/apache2/sites-available";
-enum apacheSitesEnabledDir   = "/etc/apache2/sites-enabled";
+immutable apacheConfDirCandidates = ["/etc/apache2", "/etc/httpd"];
+__gshared string serviceName;
+__gshared string apacheSitesAvailableDir;
+__gshared string apacheSitesEnabledDir;
 
 void usage()
 {
@@ -39,11 +41,29 @@ int main(string[] args)
         return 1;
     }
 
-    if (!exists(apacheSitesAvailableDir))
+    
+    foreach (candidate; apacheConfDirCandidates)
     {
-        writefln("Error: apache config dir '%s' does not exist", apacheSitesAvailableDir);
+        if (exists(candidate))
+        {
+            serviceName = baseName(candidate);
+            apacheSitesAvailableDir = candidate ~ "/sites-available";
+            apacheSitesEnabledDir = candidate ~ "/sites-enabled";
+            break;
+        }
+    }
+    if (apacheSitesAvailableDir is null)
+    {
+        writefln("Error: could not find apache dir in '%s'", apacheConfDirCandidates);
         return 1;
     }
+    if (!exists(apacheSitesAvailableDir) || !exists(apacheSitesEnabledDir))
+    {
+        writefln("Error: one of '%s' or '%s' does not exist",
+            apacheSitesAvailableDir, apacheSitesEnabledDir);
+        return 1;
+    }
+
     const confBasename = baseName(confSource);
     const confDest = buildPath(apacheSitesAvailableDir, confBasename);
     if (exists(confDest))
@@ -68,7 +88,7 @@ int main(string[] args)
     writeln("--------------------------------------------------------------------------------");
     if (prompt("would you like to restart apache"))
     {
-        runShell("sudo service apache2 reload");
+        runShell(format("sudo service %s reload", serviceName));
     }
 
     writeln("--------------------------------------------------------------------------------");
