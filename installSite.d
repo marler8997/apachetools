@@ -12,11 +12,6 @@ import std.stdio;
 
 import apache.util;
 
-immutable apacheConfDirCandidates = ["/etc/apache2", "/etc/httpd"];
-__gshared string serviceName;
-__gshared string apacheSitesAvailableDir;
-__gshared string apacheSitesEnabledDir;
-
 void usage()
 {
     writeln("Usage: ./installSite.d <site-conf-file>");
@@ -41,31 +36,16 @@ int main(string[] args)
         return 1;
     }
 
-    
-    foreach (candidate; apacheConfDirCandidates)
-    {
-        if (exists(candidate))
-        {
-            serviceName = baseName(candidate);
-            apacheSitesAvailableDir = candidate ~ "/sites-available";
-            apacheSitesEnabledDir = candidate ~ "/sites-enabled";
-            break;
-        }
-    }
-    if (apacheSitesAvailableDir is null)
-    {
-        writefln("Error: could not find apache dir in '%s'", apacheConfDirCandidates);
-        return 1;
-    }
-    if (!exists(apacheSitesAvailableDir) || !exists(apacheSitesEnabledDir))
+    const apacheConf = findApacheConf();
+    if (!exists(apacheConf.sitesAvailableDir) || !exists(apacheConf.sitesEnabledDir))
     {
         writefln("Error: one of '%s' or '%s' does not exist",
-            apacheSitesAvailableDir, apacheSitesEnabledDir);
+            apacheConf.sitesAvailableDir, apacheConf.sitesEnabledDir);
         return 1;
     }
 
     const confBasename = baseName(confSource);
-    const confDest = buildPath(apacheSitesAvailableDir, confBasename);
+    const confDest = buildPath(apacheConf.sitesAvailableDir, confBasename);
     if (exists(confDest))
     {
         if (!prompt(format("site '%s' already exists, would you like to overwrite it", confDest)))
@@ -76,7 +56,7 @@ int main(string[] args)
 
     writeln("--------------------------------------------------------------------------------");
     // check if the site is enabled
-    const enableLink = buildPath(apacheSitesEnabledDir, confBasename);
+    const enableLink = buildPath(apacheConf.sitesEnabledDir, confBasename);
     if (exists(enableLink))
     {
         writefln("site is already enabled");
@@ -86,32 +66,45 @@ int main(string[] args)
         runShell(format("sudo ln -s '%s' '%s'", confDest, enableLink));
     }
     writeln("--------------------------------------------------------------------------------");
+    bool systemd = false;
     if (prompt("would you like to restart apache"))
     {
-        runShell(format("sudo service %s reload", serviceName));
+        if (0 == tryRunShell(format("sudo systemctl restart %s", apacheConf.serviceName)))
+            systemd = true;
+        else
+            runShell(format("sudo service %s reload", apacheConf.serviceName));
     }
 
     writeln("--------------------------------------------------------------------------------");
+
     // check to make sure that the cgi module is enabled
     // we do this at the end because apache needs to be running
     // for this check to work
     {
         writeln("checking if cgi module is enabled...");
-        auto mods = runGetOutput("apache2ctl -M");
-        //writeln(mods);
-        enum cgiModule = "cgi_module";
-        enum cgidModule = "cgid_module";
-        foreach (line; mods.lineSplitter)
+        const modResult = tryRunGetOutput("apache2ctl -M");
+        if (modResult.status != 0)
         {
-            if (line.canFind(cgiModule) || line.canFind(cgidModule))
-            {
-                goto FOUND_MODULE;
-            }
+            writefln("WARNING: apache2ctl -M failed, can't verify that the CGI module is installed");
         }
-        writefln("Error: neither module '%s' nor '%s' appear to be installed", cgiModule, cgidModule);
-        writeln("try running `sudo a2enmod cgid`");
-        return 1;
-      FOUND_MODULE:
+        else
+        {
+            const mods = modResult.output;
+            //writeln(mods);
+            enum cgiModule = "cgi_module";
+            enum cgidModule = "cgid_module";
+            foreach (line; mods.lineSplitter)
+            {
+                if (line.canFind(cgiModule) || line.canFind(cgidModule))
+                {
+                    goto FOUND_MODULE;
+                }
+            }
+            writefln("Error: neither module '%s' nor '%s' appear to be installed", cgiModule, cgidModule);
+            writeln("try running `sudo a2enmod cgid`");
+            return 1;
+          FOUND_MODULE:
+        }
     }
     
     return 0;

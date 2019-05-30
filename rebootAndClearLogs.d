@@ -10,10 +10,16 @@ import apache.util;
 
 int main()
 {
-    auto errorLog = "error.log";
-    auto accessLog = "access.log";
+    const errorLog = "error.log";
+    const accessLog = "access.log";
 
-    runShell("sudo service apache2 stop");
+    const apacheConf = findApacheConf();
+
+    bool systemd = false;
+    if (0 == tryRunShell(format("sudo systemctl stop %s", apacheConf.serviceName)))
+        systemd = true;
+    else
+        runShell(format("sudo service %s stop", apacheConf.serviceName));
     if(exists(errorLog))
     {
         writefln("removing \"%s\"...", errorLog);
@@ -34,6 +40,9 @@ int main()
         writefln("access log \"%s\" does not exist", accessLog);
     }
 
-    runShell("sudo service apache2 start");
+    if (systemd)
+        runShell(format("sudo systemctl start %s", apacheConf.serviceName));
+    else
+        runShell(format("sudo service %s start", apacheConf.serviceName));
     return 0;
 }
